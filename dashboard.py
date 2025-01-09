@@ -1,117 +1,150 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from tkinter import Tk, filedialog
+import streamlit as st
+from sklearn.linear_model import LinearRegression
+import numpy as np
+import plotly.express as px
+import requests
 
-# Function to upload CSV file
-def upload_csv():
-    Tk().withdraw()  # Hide the root Tkinter window
-    file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
-    if file_path:
-        try:
-            data = pd.read_csv(file_path)
-            print("Data uploaded successfully!")
-            print(data.head())
-            return data
-        except Exception as e:
-            print(f"Error reading the file: {e}")
+# Page Configuration
+st.set_page_config(page_title="Health Awareness Dashboard", layout="wide")
+
+# Title
+st.title("Enhanced Health Awareness Dashboard")
+
+# Sidebar Filters
+st.sidebar.header("Upload or Fetch Data")
+
+# Option to Upload CSV File
+uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="csv")
+
+# Option to Fetch Real-Time Data
+fetch_data = st.sidebar.button("Fetch WHO Real-Time Data")
+
+if fetch_data:
+    def fetch_who_data():
+        url = "https://ghoapi.azureedge.net/api/Indicator"  # Example WHO API endpoint
+        response = requests.get(url)
+
+        if response.status_code == 200:
+            data = response.json()
+            return pd.json_normalize(data["value"])  # Adjust based on API structure
+        else:
+            st.error("Failed to fetch data from WHO API.")
             return None
-    else:
-        print("No file selected.")
-        return None
 
-# Function to plot vaccination rates
-def plot_vaccination_rates(data):
-    if 'Country' in data.columns and 'VaccinationRate' in data.columns:
-        plt.figure(figsize=(12, 6))
-        sns.barplot(x='Country', y='VaccinationRate', data=data)
-        plt.title("Vaccination Rates by Country")
-        plt.xlabel("Country")
-        plt.ylabel("Vaccination Rate (%)")
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.show()
+    data = fetch_who_data()
+else:
+    if uploaded_file:
+        data = pd.read_csv(uploaded_file)
     else:
-        print("Required columns 'Country' and 'VaccinationRate' are missing in the dataset.")
+        data = None
 
-# Function to query health data by country
-def query_country(data, country):
-    country_data = data[data['Country'].str.lower() == country.lower()]
-    if not country_data.empty:
-        print(f"Health Data for {country}:")
-        print(country_data)
-    else:
-        print(f"No data found for {country}.")
+if data is not None:
+    st.write("### Dataset Preview")
+    st.dataframe(data.head())
 
-# Function to plot trends over time
-def plot_trend(data, country, indicator):
-    if 'Country' in data.columns and 'Year' in data.columns and indicator in data.columns:
-        country_data = data[data['Country'].str.lower() == country.lower()]
-        if not country_data.empty:
-            plt.figure(figsize=(10, 6))
-            plt.plot(country_data['Year'], country_data[indicator], marker='o', label=country)
-            plt.title(f"{indicator} Trend for {country}")
-            plt.xlabel("Year")
-            plt.ylabel(indicator)
-            plt.legend()
-            plt.grid()
-            plt.tight_layout()
-            plt.show()
+    # Sidebar Options
+    st.sidebar.header("Options")
+    analysis_type = st.sidebar.selectbox(
+        "Select Analysis Type",
+        ["Overview", "Visualization", "Comparative Analysis", "Predictions", "Geospatial Mapping"]
+    )
+
+    if analysis_type == "Overview":
+        st.subheader("Dataset Overview")
+        st.write("Shape of the dataset:", data.shape)
+        st.write("Columns in the dataset:", data.columns.tolist())
+        st.write(data.describe())
+
+    elif analysis_type == "Visualization":
+        st.subheader("Data Visualization")
+
+        # Metric Selection
+        metric = st.selectbox("Select a metric to visualize", data.columns[2:])
+
+        # Plot Bar Chart
+        st.write(f"### {metric} Across All Countries")
+        fig = px.bar(data, x="Year", y=metric, title=f"{metric} Over Time Across All Countries")
+        st.plotly_chart(fig)
+
+    elif analysis_type == "Comparative Analysis":
+        st.subheader("Comparative Analysis")
+
+        # Select Countries and Metric
+        countries = st.multiselect("Select countries to compare", data["Country"].unique())
+        metric = st.selectbox("Select a metric", data.columns[2:])
+
+        # Plot Comparison
+        if countries:
+            comparison_data = data[data["Country"].isin(countries)]
+            fig = px.line(
+                comparison_data,
+                x="Year",
+                y=metric,
+                color="Country",
+                title=f"Comparison of {metric} Across Selected Countries"
+            )
+            st.plotly_chart(fig)
+
+    elif analysis_type == "Predictions":
+        st.subheader("Predict Future Trends")
+
+        # Metric Selection
+        metric = st.selectbox("Select a metric for prediction", data.columns[2:])
+
+        # Prepare Data for Prediction
+        X = data["Year"].values.reshape(-1, 1)
+        y = data[metric].values
+
+        # Train Linear Regression Model
+        model = LinearRegression()
+        model.fit(X, y)
+
+        # Predict for Future Years
+        future_years = np.arange(X[-1, 0] + 1, X[-1, 0] + 6).reshape(-1, 1)
+        predictions = model.predict(future_years)
+
+        # Display Predictions
+        prediction_df = pd.DataFrame({
+            "Year": future_years.flatten(),
+            "Predicted": predictions
+        })
+        st.write("### Predicted Values for Entire Dataset")
+        st.dataframe(prediction_df)
+
+        # Plot Predictions
+        fig = px.line(
+            prediction_df,
+            x="Year",
+            y="Predicted",
+            title=f"Predicted {metric} for All Countries"
+        )
+        st.plotly_chart(fig)
+
+    elif analysis_type == "Geospatial Mapping":
+        st.subheader("Geospatial Mapping")
+
+        # Example dataset for mapping
+        st.write("Mapping Health Metrics Globally")
+        if "Latitude" in data.columns and "Longitude" in data.columns:
+            fig = px.scatter_geo(
+                data,
+                lat="Latitude",
+                lon="Longitude",
+                size="HealthMetric",  # Ensure the relevant column is used here for global health metrics
+                color="HealthMetric",  # Adjust according to the metric you want to map
+                hover_name="Country",
+                title="Global Health Metrics",
+                projection="natural earth"
+            )
+            st.plotly_chart(fig)
         else:
-            print(f"No data found for {country}.")
-    else:
-        print(f"Required columns are missing or invalid indicator: {indicator}.")
+            st.error("The dataset does not contain 'Latitude' and 'Longitude' columns for mapping.")
 
-# Function to filter data by region
-def filter_by_region(data, region):
-    if 'Region' in data.columns:
-        filtered_data = data[data['Region'].str.lower() == region.lower()]
-        if not filtered_data.empty:
-            print(f"Filtered Data for Region: {region}")
-            print(filtered_data.head())
-            return filtered_data
-        else:
-            print(f"No data found for {region}.")
-    else:
-        print("Column 'Region' is missing in the dataset.")
-        return None
+else:
+    st.write("Please upload a dataset or fetch real-time data to proceed.")
 
-# Main dashboard function
-def main():
-    print("Welcome to the Enhanced Health Awareness Dashboard!")
-    data = upload_csv()
-    if data is None:
-        print("No data to work with. Exiting.")
-        return
-
-    while True:
-        print("\nMenu:")
-        print("1. View Vaccination Rates (Bar Chart)")
-        print("2. Query Health Data by Country")
-        print("3. Plot Trends Over Time")
-        print("4. Filter Data by Region")
-        print("5. Exit")
-
-        choice = input("Enter your choice (1/2/3/4/5): ")
-        
-        if choice == '1':
-            plot_vaccination_rates(data)
-        elif choice == '2':
-            country = input("Enter the country name: ")
-            query_country(data, country)
-        elif choice == '3':
-            country = input("Enter the country name: ")
-            indicator = input("Enter the indicator (e.g., LifeExpectancy): ")
-            plot_trend(data, country, indicator)
-        elif choice == '4':
-            region = input("Enter the region: ")
-            filter_by_region(data, region)
-        elif choice == '5':
-            print("Goodbye!")
-            break
-        else:
-            print("Invalid choice. Please try again.")
-
-# Run the dashboard
-if __name__ == "__main__":
-    main()
+# Footer
+st.sidebar.markdown("### Powered by Streamlit")
